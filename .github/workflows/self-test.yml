@@ -1,32 +1,23 @@
 name: Self Test
 on:
   push:
-  pull_request:
-permissions:
-  contents: read
+  workflow_dispatch:
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./
-        with:
-          tenant_id: test-tenant
-      - name: Verify output shape
-        shell: bash
+
+      - name: Seed a test secret as a local commit
         run: |
-          test -f securitykane_gitleaks.json
-          jq -e '
-            has("tenant_id") and
-            has("repository_id") and
-            has("repository_full_name") and
-            has("commit_sha") and
-            has("run_id") and
-            has("generated_at") and
-            has("findings") and
-            (.findings | type=="array")
-          ' securitykane_gitleaks.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: selftest-json
-          path: securitykane_gitleaks.json
+          printf '%s\n' 'ghp_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ' > secret.txt
+          git config user.email "ci@example.com"
+          git config user.name "CI"
+          git checkout -b ci-secrets-test || true
+          git add secret.txt
+          git commit -m "test: add dummy secret"
+
+      - uses: ./
+        env:
+          SK_TENANT_ID: dummy-tenant

@@ -1,16 +1,12 @@
 name: SecurityKane Gitleaks Composite Action
 description: Run gitleaks and produce a merged JSON report with metadata
-inputs:
-  tenant_id:
-    description: Tenant identifier
-    required: true
 runs:
   using: composite
   steps:
     - name: Install gitleaks and jq
       shell: bash
       run: |
-        set -e
+        set -euo pipefail
         sudo apt-get update
         sudo apt-get install -y jq curl
         GITLEAKS_VERSION="${GITLEAKS_VERSION:-v8.18.4}"
@@ -19,39 +15,61 @@ runs:
         tar -xzf gitleaks.tar.gz gitleaks
         sudo mv gitleaks /usr/local/bin/gitleaks
         gitleaks version
-    - name: Run gitleaks
+    - name: Run gitleaks (git history)
       shell: bash
       run: |
-        gitleaks detect --no-color --report-format=json --report-path gitleaks_raw.json --exit-code 0
+        set -euo pipefail
+        gitleaks detect --source . --no-color --report-format=json --report-path gitleaks.json --exit-code 0
+        test -s gitleaks.json || echo "[]" > gitleaks.json
+    - name: Merge findings
+      shell: bash
+      run: |
+        set -euo pipefail
+        jq -s 'map(if type=="array" then . else [] end) | add' gitleaks.json > findings.json
     - name: Build merged JSON
       shell: bash
       env:
-        SK_TENANT_ID: ${{ inputs.tenant_id }}
+        SK_TENANT_ID: ${{ env.SK_TENANT_ID }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_SHA: ${{ github.sha }}
+        GITHUB_RUN_ID: ${{ github.run_id }}
+        GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        GITHUB_REF: ${{ github.ref }}
+        GITHUB_REF_NAME: ${{ github.ref_name }}
+        GITHUB_ACTOR: ${{ github.actor }}
+        GITHUB_SERVER_URL: ${{ github.server_url }}
       run: |
-        RAW="gitleaks_raw.json"
-        if [ ! -s "$RAW" ]; then
-          echo "[]" > findings.json
-        else
-          if jq -e . "$RAW" >/dev/null 2>&1; then
-            jq 'if type=="array" then . else [] end' "$RAW" > findings.json
-          else
-            echo "[]" > findings.json
-          fi
-        fi
+        set -euo pipefail
         GEN_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
         jq -n \
-          --arg tenant_id "$SK_TENANT_ID" \
-          --arg repository_id "${GITHUB_REPOSITORY_ID}" \
-          --arg repository_full_name "${GITHUB_REPOSITORY}" \
+          --arg tenant_id "${SK_TENANT_ID:-}" \
+          --arg repository "${GITHUB_REPOSITORY}" \
           --arg commit_sha "${GITHUB_SHA}" \
           --arg run_id "${GITHUB_RUN_ID}" \
-          --arg generated_at "$GEN_AT" \
+          --arg run_attempt "${GITHUB_RUN_ATTEMPT}" \
+          --arg ref "${GITHUB_REF}" \
+          --arg ref_name "${GITHUB_REF_NAME}" \
+          --arg actor "${GITHUB_ACTOR}" \
+          --arg run_url "${RUN_URL}" \
+          --arg generated_at "${GEN_AT}" \
           --slurpfile findings findings.json \
-          '{tenant_id:$tenant_id, repository_id:$repository_id, repository_full_name:$repository_full_name, commit_sha:$commit_sha, run_id:$run_id, generated_at:$generated_at, findings:$findings[0]}' > securitykane_gitleaks.json
+          '{
+            tenant_id: $tenant_id,
+            repository: $repository,
+            commit_sha: $commit_sha,
+            run_id: $run_id,
+            run_attempt: $run_attempt,
+            ref: $ref,
+            ref_name: $ref_name,
+            actor: $actor,
+            run_url: $run_url,
+            generated_at: $generated_at,
+            findings: $findings[0]
+          }' > securitykane_gitleaks.json
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: securitykane-gitleaks-${{ github.run_id }}
+        name: sk-secrets-${{ github.run_id }}
         path: securitykane_gitleaks.json
         if-no-files-found: error
-
