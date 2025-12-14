@@ -87,7 +87,16 @@ runs:
 
         # Check if OIDC token URL is available (requires 'id-token: write' permission)
         if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-          handle_failure "ERROR: ACTIONS_ID_TOKEN_REQUEST_URL is not set."
+          handle_failure "ERROR: ACTIONS_ID_TOKEN_REQUEST_URL is not set.
+Ensure your workflow has 'permissions: id-token: write' configured.
+
+Example workflow configuration:
+  permissions:
+    id-token: write
+    contents: read"
+          exit 0
+        fi
+
         # Get OIDC token
         OIDC_TOKEN=$(curl -fsSL --retry 3 --retry-all-errors \
           -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
