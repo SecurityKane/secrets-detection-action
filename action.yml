@@ -3,6 +3,7 @@ description: Run gitleaks and produce a merged JSON report with metadata
 runs:
   using: composite
   steps:
+
     - name: Install gitleaks and jq
       shell: bash
       run: |
@@ -17,17 +18,20 @@ runs:
         tar -xzf gitleaks.tar.gz gitleaks
         sudo mv gitleaks /usr/local/bin/gitleaks
         gitleaks version
+
     - name: Run gitleaks (git history)
       shell: bash
       run: |
         set -euo pipefail
         gitleaks detect --source . --no-color --report-format=json --report-path gitleaks.json --exit-code 0
         test -s gitleaks.json || echo "[]" > gitleaks.json
+
     - name: Merge findings
       shell: bash
       run: |
         set -euo pipefail
         jq -s 'map(if type=="array" then . else [] end) | add' gitleaks.json > findings.json
+
     - name: Build merged JSON
       shell: bash
       env:
@@ -69,101 +73,62 @@ runs:
             generated_at: $generated_at,
             findings: $findings[0]
           }' > securitykane_gitleaks.json
+
+    - name: Generate local artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: gitleaks-results
+        path: securitykane_gitleaks.json
+        if-no-files-found: error
+
     - name: Post to backend and upload to S3
       shell: bash
       env:
         GITHUB_REPOSITORY: ${{ github.repository }}
       run: |
-        set -uo pipefail
-
-        # Initialize upload status file - will be set to "failed" if upload fails
-        rm -f .s3_upload_failed
-
-        # Function to handle failures
-        handle_failure() {
-          echo "$1"
-          touch .s3_upload_failed
-        }
+        set -euo pipefail
 
         # Check if OIDC token URL is available (requires 'id-token: write' permission)
         if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-          handle_failure "ERROR: ACTIONS_ID_TOKEN_REQUEST_URL is not set.
-Ensure your workflow has 'permissions: id-token: write' configured.
-
-Example workflow configuration:
-  permissions:
-    id-token: write
-    contents: read"
-          exit 0
+          echo "ERROR: ACTIONS_ID_TOKEN_REQUEST_URL is not set."
+          echo "Ensure your workflow has 'permissions: id-token: write' configured."
+          echo ""
+          echo "Example workflow configuration:"
+          echo "  permissions:"
+          echo "    id-token: write"
+          echo "    contents: read"
+          exit 1
         fi
 
         # Get OIDC token
         OIDC_TOKEN=$(curl -fsSL --retry 3 --retry-all-errors \
           -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
           "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=securitykane" \
-          | jq -r '.value') || {
-          handle_failure "ERROR: Failed to obtain OIDC token from GitHub Actions"
-          exit 0
-        }
+          | jq -r '.value')
 
         if [ -z "$OIDC_TOKEN" ] || [ "$OIDC_TOKEN" = "null" ]; then
-          handle_failure "ERROR: Failed to obtain OIDC token from GitHub Actions"
-          exit 0
+          echo "ERROR: Failed to obtain OIDC token from GitHub Actions"
+          exit 1
         fi
 
         # Request presigned URL with retry
-        RESPONSE=""
         for i in 1 2 3; do
           RESPONSE=$(curl -fsSL --connect-timeout 10 -X POST \
             -H "Content-Type: application/json" \
             -d "{\"token\":\"${OIDC_TOKEN}\",\"repository\":\"${GITHUB_REPOSITORY}\"}" \
             https://anamaria-deathful-ungeodetically.ngrok-free.dev/api/integrations/github/tenant-info/ 2>&1) && break
-          if [ $i -eq 3 ]; then
-            handle_failure "ERROR: Failed to get presigned URL: $RESPONSE"
-            exit 0
-          fi
-          sleep $((2**i))
+          [ $i -lt 3 ] && sleep $((2**i)) || { echo "ERROR: Failed to get presigned URL: $RESPONSE"; exit 1; }
         done
 
         # Validate and extract presigned URL
         S3_URL=$(echo "$RESPONSE" | jq -r '.presigned_url')
         if [ -z "$S3_URL" ] || [ "$S3_URL" = "null" ]; then
-          handle_failure "ERROR: Invalid presigned URL in response: $RESPONSE"
-          exit 0
+          echo "ERROR: Invalid presigned URL in response: $RESPONSE"
+          exit 1
         fi
 
         # Upload to S3
-        if ! curl -fsSL --retry 3 --retry-all-errors --connect-timeout 30 -X PUT \
+        curl -fsSL --retry 3 --retry-all-errors --connect-timeout 30 -X PUT \
           --data-binary @securitykane_gitleaks.json \
           -H "Content-Type: application/json" \
-          "${S3_URL}"; then
-          handle_failure "ERROR: Failed to upload to S3"
-          exit 0
-        fi
-
-        echo "Successfully uploaded results to S3"
-    - name: Upload results as artifact if S3 upload failed
-      shell: bash
-      run: |
-        if [ -f .s3_upload_failed ]; then
-          echo "S3 upload failed. Uploading results as GitHub artifact..."
-        else
-          echo "S3 upload succeeded. Skipping artifact upload."
-          exit 0
-        fi
-      continue-on-error: true
-    - name: Upload artifact
-      if: hashFiles('.s3_upload_failed') != ''
-      uses: actions/upload-artifact@v4
-      with:
-        name: gitleaks-results
-        path: securitykane_gitleaks.json
-        if-no-files-found: error
-    - name: Fail if S3 upload failed
-      shell: bash
-      run: |
-        if [ -f .s3_upload_failed ]; then
-          echo "ERROR: S3 upload failed. Results have been uploaded as an artifact."
-          echo "Please check the 'gitleaks-results' artifact for the scan results."
-          exit 1
-        fi
+          "${S3_URL}"
