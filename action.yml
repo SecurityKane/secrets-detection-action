@@ -33,8 +33,15 @@ runs:
         ls -la jira_test.py || echo "File not found"
         echo "=== DEBUG: Git history for jira_test.py ==="
         git log --oneline --all -- jira_test.py || echo "No history for jira_test.py"
-        echo "=== DEBUG: Running gitleaks ==="
-        gitleaks detect --source . --no-color --report-format=json --report-path gitleaks.json --exit-code 0
+        echo "=== DEBUG: Checking for gitleaks config files ==="
+        ls -la .gitleaks* 2>/dev/null || echo "No .gitleaks config files found"
+        ls -la gitleaks.toml 2>/dev/null || echo "No gitleaks.toml found"
+        echo "=== DEBUG: Content of jira_test.py at current HEAD ==="
+        head -20 jira_test.py
+        echo "=== DEBUG: Checking if secret string is in the file ==="
+        grep -i "ATATT3" jira_test.py || echo "Secret string NOT found in file"
+        echo "=== DEBUG: Running gitleaks with verbose output ==="
+        gitleaks detect --source . --no-color --report-format=json --report-path gitleaks.json --exit-code 0 --verbose 2>&1 || true
         test -s gitleaks.json || echo "[]" > gitleaks.json
         echo "=== DEBUG: Raw gitleaks output ==="
         cat gitleaks.json | jq '.'
