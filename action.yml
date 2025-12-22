@@ -23,11 +23,6 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        # Ignore gitleaks output files to prevent detecting secrets in old scan results
-        echo "gitleaks.json" > .gitleaksignore
-        echo "gitleaks_*.json" >> .gitleaksignore
-        echo "findings.json" >> .gitleaksignore
-        echo "securitykane_gitleaks.json" >> .gitleaksignore
         gitleaks detect --source . --no-color --report-format=json --report-path gitleaks.json --exit-code 0
         test -s gitleaks.json || echo "[]" > gitleaks.json
 
