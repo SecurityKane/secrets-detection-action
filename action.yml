@@ -23,6 +23,17 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        echo "=== DEBUG: Git commit history ==="
+        git log --oneline --all
+        echo "=== DEBUG: Current commit ==="
+        git rev-parse HEAD
+        echo "=== DEBUG: Checking for specific commit 901be21768b8bc0a67b4534cd67bfb629f51738b ==="
+        git log --oneline | grep 901be21 || echo "Commit 901be21 not found"
+        echo "=== DEBUG: Checking if jira_test.py exists ==="
+        ls -la jira_test.py || echo "File not found"
+        echo "=== DEBUG: Git history for jira_test.py ==="
+        git log --oneline --all -- jira_test.py || echo "No history for jira_test.py"
+        echo "=== DEBUG: Running gitleaks ==="
         gitleaks detect --source . --no-color --report-format=json --report-path gitleaks.json --exit-code 0
         test -s gitleaks.json || echo "[]" > gitleaks.json
         echo "=== DEBUG: Raw gitleaks output ==="
