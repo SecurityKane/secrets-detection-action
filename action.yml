@@ -19,34 +19,18 @@ runs:
         sudo mv gitleaks /usr/local/bin/gitleaks
         gitleaks version
 
-    - name: Run gitleaks (git history)
+    - name: Run gitleaks
       shell: bash
       run: |
         set -euo pipefail
-        echo "=== DEBUG: Gitleaks version ==="
-        gitleaks version
-        which gitleaks
-        echo "=== DEBUG: Content of jira_test.py at current HEAD ==="
-        head -20 jira_test.py
-        echo "=== DEBUG: Checking if secret string is in the file ==="
-        grep -i "ATATT3" jira_test.py || echo "Secret string NOT found in file"
-        echo "=== DEBUG: Running gitleaks detect ==="
-        gitleaks detect --source . --no-color --report-format=json --report-path gitleaks.json --exit-code 0 --verbose 2>&1 || true
+        gitleaks detect --source . --no-color --report-format=json --report-path gitleaks.json --exit-code 0
         test -s gitleaks.json || echo "[]" > gitleaks.json
-        echo "=== DEBUG: Raw gitleaks output ==="
-        cat gitleaks.json | jq '.'
-        echo "=== DEBUG: Number of findings ==="
-        cat gitleaks.json | jq 'length'
 
     - name: Merge findings
       shell: bash
       run: |
         set -euo pipefail
         jq -s 'map(if type=="array" then . else [] end) | add' gitleaks.json > findings.json
-        echo "=== DEBUG: After jq merge ==="
-        cat findings.json | jq '.'
-        echo "=== DEBUG: Number of findings after merge ==="
-        cat findings.json | jq 'length'
 
     - name: Build merged JSON
       shell: bash
@@ -89,17 +73,15 @@ runs:
             generated_at: $generated_at,
             findings: $findings[0]
           }' > securitykane_gitleaks.json
-        echo "=== DEBUG: Final output ==="
-        cat securitykane_gitleaks.json | jq '.findings | length'
 
-    - name: Generate local artifact
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: gitleaks-results
         path: securitykane_gitleaks.json
         if-no-files-found: error
 
-    - name: Post to backend and upload to S3
+    - name: Upload to S3
       shell: bash
       env:
         GITHUB_REPOSITORY: ${{ github.repository }}
